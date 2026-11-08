@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# This is a dedicated CI browser: no root/privileged container or huge /dev/shm
+# is needed. Both chromium command names and CHROME_BIN use this launcher.
+exec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage "$@"

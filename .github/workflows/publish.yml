@@ -1,0 +1,107 @@
+name: Daily Docker Hub publication
+
+on:
+  schedule:
+    - cron: '43 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-publish
+  cancel-in-progress: false
+
+env:
+  DOCKER_IMAGE: insanusmokrassar/teamcity-agent
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.prepare.outputs.enabled }}
+      version: ${{ steps.prepare.outputs.version }}
+      created: ${{ steps.prepare.outputs.created }}
+    steps:
+      - name: Check publication credentials and choose a shared UTC date
+        id: prepare
+        env:
+          DOCKER_LOGIN: ${{ secrets.DOCKER_LOGIN }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -z "$DOCKER_LOGIN" || -z "$DOCKER_PASSWORD" ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'Publication skipped: configure DOCKER_LOGIN and DOCKER_PASSWORD. The independent Build and test workflow needs no secrets.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          echo "version=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.enabled == 'true'
+    name: Build, test and publish ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Rebuild with fresh base images and dependencies
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          pull: true
+          no-cache: true
+          load: true
+          push: false
+          tags: teamcity-agent:test-${{ matrix.arch }}
+          build-args: |
+            BUILD_DATE=${{ needs.prepare.outputs.created }}
+            VCS_REF=${{ github.sha }}
+      - name: Test before logging in or pushing anything
+        run: ./scripts/test-image.sh teamcity-agent:test-${{ matrix.arch }} jetbrains/teamcity-agent:latest linux/${{ matrix.arch }}
+      - name: Log into Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKER_LOGIN }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Push the tested architecture image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker tag "teamcity-agent:test-$ARCH" "$DOCKER_IMAGE:$VERSION-$ARCH"
+          docker push "$DOCKER_IMAGE:$VERSION-$ARCH"
+
+  manifest:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKER_LOGIN }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Publish multi-platform date and latest tags only after both tests pass
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            --tag "$DOCKER_IMAGE:$VERSION" \
+            --tag "$DOCKER_IMAGE:latest" \
+            "$DOCKER_IMAGE:$VERSION-amd64" \
+            "$DOCKER_IMAGE:$VERSION-arm64"
+          docker buildx imagetools inspect "$DOCKER_IMAGE:$VERSION"
+          echo "Published $DOCKER_IMAGE:$VERSION and :latest for linux/amd64 and linux/arm64." >> "$GITHUB_STEP_SUMMARY"
