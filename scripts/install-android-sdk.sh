@@ -36,8 +36,10 @@ if [[ "$TARGETARCH" == arm64 ]]; then
     curl --fail --location --retry 5 "$artifact" --output "$archive"
     checksum=$(curl --fail --location --retry 5 "${artifact}.sha1")
     printf '%s  %s\n' "$checksum" "$archive" | sha1sum --check -
-    unzip -p "$archive" aapt2 > "$tools/aapt2"
-    chmod 755 "$tools/aapt2"
+    # The ARM64 binary uses the bundled musl loader and libc++; extracting only
+    # aapt2 produces a valid ARM ELF that cannot actually start.
+    unzip -oq "$archive" aapt2 'lib64/*' -d "$tools"
+    chmod 755 "$tools/aapt2" "$tools/lib64/libc_musl.so" "$tools/lib64/libc++.so"
     rm "$archive"
     for tool in aapt aidl zipalign; do ln -sf "/usr/bin/$tool" "$tools/$tool"; done
     for tool in adb fastboot; do ln -sf "/usr/bin/$tool" "$ANDROID_HOME/platform-tools/$tool"; done

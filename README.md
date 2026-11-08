@@ -1,137 +1,150 @@
 # TeamCity Agent Docker
 
-Образ **поверх официального `jetbrains/teamcity-agent:latest`** для Java/Kotlin,
-Android и браузерных тестов. Платформы: `linux/amd64` и `linux/arm64` (RPi 5 с
-64-битной ОС). Образ не заменяет механизм запуска TeamCity собственным скриптом.
+An image **based on the official `jetbrains/teamcity-agent:latest`** for
+Java/Kotlin, Android, and browser tests. Supported platforms: `linux/amd64` and
+`linux/arm64` (including Raspberry Pi 5 running a 64-bit OS).
+It inherits the original TeamCity startup mechanism instead of replacing it.
 
-## Что установлено
+## Included tools
 
-- TeamCity-агент, JDK 21, Git и остальные инструменты официального образа.
-- Python 3, GnuPG, curl, CA certificates, zip/unzip и xz.
-- Node.js 24 LTS и npm из официального multiarch-образа Node.
-- Настоящий **Chromium** и Linux-библиотеки из подписанного
-  [PPA XtraDeb](https://launchpad.net/~xtradeb/+archive/ubuntu/apps) для Ubuntu
-  24.04. Не Google Chrome, не Chrome for Testing и не Ubuntu Snap.
-- Обе команды: `chromium` и `chromium-browser`; `CHROME_BIN` задан автоматически.
-- Android Command-line Tools **21.0 / 15641748**, SDK platform **37.0**, Build Tools
-  **37.0.0**, platform-tools и принятые SDK licenses.
-- `ANDROID_HOME` и `ANDROID_SDK_ROOT`: `/opt/android-sdk`, SDK доступен на запись
-  пользователю `buildagent`. Для существующих проверок API 37 также доступен путь
-  `/opt/android-sdk/platforms/android-37`.
+- The official TeamCity agent, JDK 21, Git, and the base image's other tools.
+- Python 3, GnuPG, curl, CA certificates, zip/unzip, and xz.
+- Node.js 24 LTS and npm from the official multi-platform Node image.
+- Real **Chromium** and its Linux dependencies from the signed
+  [XtraDeb PPA](https://launchpad.net/~xtradeb/+archive/ubuntu/apps) for Ubuntu
+  24.04. No Google Chrome, Chrome for Testing, or Ubuntu Snap.
+- Both `chromium` and `chromium-browser` commands; `CHROME_BIN` is set automatically.
+- Android Command-line Tools **21.0 / 15641748**, SDK platform **37.0**,
+  Build Tools **37.0.0**, platform-tools, and accepted SDK licenses.
+- `ANDROID_HOME` and `ANDROID_SDK_ROOT` are `/opt/android-sdk`. The SDK is writable
+  by `buildagent`. `/opt/android-sdk/platforms/android-37` is also available for
+  existing API 37 preflight checks.
 
-Chromium запускается с `--no-sandbox --disable-dev-shm-usage` для контейнерных
-CI-тестов. Не требуется Snap, privileged-контейнер или установка пакетов во время
-сборки проекта. Версия Chromium обновляется при ежедневной пересборке из apt.
-PPA ограничен pinning-правилами для пакетов Chromium; ключ проверяется по полному
-fingerprint. Образ намеренно проверяет Ubuntu 24.04: при смене ОС в upstream
-сборка остановится, а не подключит репозиторий другой ОС.
+Chromium runs with `--no-sandbox --disable-dev-shm-usage` for containerized CI
+tests. No Snap, privileged container, or package installation during project
+builds is required. Daily image rebuilds update Chromium through apt.
+PPA pinning limits it to Chromium packages, and its signing key is checked
+against its full fingerprint. The build explicitly checks for Ubuntu 24.04:
+if upstream changes the OS, it fails rather than mixing distribution releases.
 
-### Особенности ARM64
+### ARM64 details
 
-Java, Node, Chromium и агент работают нативно. Официальный Android SDK пока
-содержит ряд x86 Linux host tools. Поэтому в ARM64-варианте:
+Java, Node, Chromium, and the agent run natively. Google's Android SDK ZIP still
+contains several x86 Linux host tools, so the ARM64 image provides:
 
-- `aapt2` заменён нативным **9.5.1-16666295 из официального Google Maven**;
-- задано `ORG_GRADLE_PROJECT_android.aapt2FromMavenOverride`, чтобы старые AGP,
-  включая 9.1.x, не скачивали x86-вариант `aapt2`;
-- `aapt`, `aidl`, `zipalign`, `adb` и `fastboot` используют нативные пакеты Ubuntu.
-  Их версии отличаются от версий в Google SDK ZIP.
+- Native `aapt2` **9.5.1-16666295 from official Google Maven**, not an unofficial
+  ARM binary mirror.
+- `ORG_GRADLE_PROJECT_android.aapt2FromMavenOverride`, preventing older AGP
+  releases, including 9.1.x, from downloading an x86-only `aapt2`.
+- Native Ubuntu packages for `aapt`, `aidl`, `zipalign`, `adb`, and `fastboot`.
+  Their versions differ from the tools in Google's SDK ZIP.
 
-Command-line Tools зафиксированы на Java-версии `sdkmanager`: более новый архив
-23.0 заменяет его launcher-ом нативного Android CLI, что не подходит для
-одинаковой установки на amd64 и arm64.
+Command-line Tools are pinned to the Java-based `sdkmanager`. The newer 23.0
+archive replaces it with a launcher for a native Android CLI, which is not
+suitable for the same installation procedure on both architectures.
 
-Smoke test действительно компилирует и связывает Android-ресурсы на каждой
-архитектуре. NDK, эмулятор Android, аппаратные тесты и сборка произвольного
-проекта целиком этим тестом не покрываются. Остальные нативные утилиты Google SDK
-не объявляются ARM-совместимыми только по факту наличия файлов.
+The smoke test actually compiles and links Android resources on each
+architecture. It does not cover the NDK, Android emulator, hardware tests, or
+an entire arbitrary Android project. Other native SDK utilities are not
+claimed to support ARM merely because their files exist in the image.
 
-## Замена текущего агента
+## Replace an existing agent
 
-После первой публикации заменить **только имя образа** в существующем запуске:
+After the first successful publication, change **only the image name** in the
+existing container configuration:
 
 ```yaml
 image: insanusmokrassar/teamcity-agent:latest
-# либо фиксированная дата: insanusmokrassar/teamcity-agent:YYYY-MM-DD
+# Or pin a build date: insanusmokrassar/teamcity-agent:YYYY-MM-DD
 ```
 
-Оставить прежние `SERVER_URL`, `AGENT_NAME`, `AGENT_TOKEN`, сети и volumes,
-включая `/data/teamcity_agent/conf` и `/opt/buildagent/*`. Сохранённый `conf`
-сохраняет авторизацию агента. По умолчанию он продолжает работать как
-`buildagent` (UID/GID 1000). `CMD`, `ENTRYPOINT`, `WORKDIR` и volumes наследуются
-от официального образа; root используется только при сборке Dockerfile.
+Keep the existing `SERVER_URL`, `AGENT_NAME`, `AGENT_TOKEN`, networks, and volumes,
+including `/data/teamcity_agent/conf` and `/opt/buildagent/*`. The persisted
+configuration retains the agent's authorization. The default user remains
+`buildagent` (UID/GID 1000). `CMD`, `ENTRYPOINT`, `WORKDIR`, and volumes are
+inherited from the official image. Root is used only while building the image.
 
-Этот репозиторий сам по себе **не меняет и не перезапускает существующий агент**.
+This repository **does not modify or restart an existing agent** by itself.
 
-## Локальная проверка без секретов и публикации
+## Local testing without secrets or publishing
 
-Нужны Docker с Buildx, Bash, Python 3 и Git на машине, где выполняется проверка:
+The testing host needs Docker with Buildx, Bash, Python 3, and Git:
 
 ```bash
 ./scripts/test-local.sh
 ```
 
-Скрипт собирает и загружает образ в локальный Docker, запускает smoke test от
-`buildagent` и сверяет контракт запуска с официальным образом. Он не делает
-`docker login` и `docker push`.
+This builds and loads the image into local Docker, runs the smoke test as
+`buildagent`, and compares its startup contract with the official image.
+It never runs `docker login` or `docker push`.
 
 ```bash
 PLATFORM=linux/amd64 ./scripts/test-local.sh
-PLATFORM=linux/arm64 ./scripts/test-local.sh  # нативно на RPi 5 / другом ARM64
-./scripts/test-local.sh --no-cache          # полная свежая пересборка
+PLATFORM=linux/arm64 ./scripts/test-local.sh  # Native on a Pi 5 or another ARM64 host
+./scripts/test-local.sh --no-cache          # Rebuild all dependencies from scratch
 ```
 
-На другой архитектуре требуется заранее настроенная Docker/QEMU-эмуляция.
-Скрипт не меняет binfmt хоста автоматически. GitHub Actions проверяет обе
-архитектуры на **нативных** runners, без QEMU.
+Cross-architecture testing requires Docker/QEMU emulation configured beforehand.
+The script does not change the host's binfmt configuration. GitHub Actions
+tests both architectures on **native runners**, without QEMU.
 
-Smoke test проверяет Java 21-компиляцию, инструменты, права на SDK, настоящую
-компиляцию/link Android-ресурсов и выполнение JavaScript в headless Chromium.
+The smoke test checks Java 21 compilation, tools, SDK write permissions,
+actual Android resource compilation/linking, and JavaScript execution in
+headless Chromium. Image metadata checks verify the original agent's startup
+command, user, volumes, and working directory.
 
-Параметры Dockerfile переопределяются через `--build-arg`, например:
+Override Dockerfile parameters with `--build-arg`, for example:
 
 ```bash
 ./scripts/test-local.sh --build-arg ANDROID_API=37.0
 ```
 
-`TEAMCITY_AGENT_IMAGE` позволяет зафиксировать официальный базовый tag/digest.
-Он должен включать обе Linux-архитектуры при multiarch-сборке; например, не все
-теги с суффиксом `-linux` включают ARM64. Обновление Java/Ubuntu в upstream
-проверяется smoke test, а не предполагается незаметно совместимым.
+Set `TEAMCITY_AGENT_IMAGE` to pin the official base tag or digest. A multi-platform
+build needs a base tag containing both Linux architectures: not all tags ending
+in `-linux` include ARM64. Upstream Java/Ubuntu changes must pass the smoke test
+rather than being assumed compatible.
 
-## GitHub Actions и Docker Hub
+## GitHub Actions and Docker Hub
 
-Два независимых workflow:
+Two independent workflows are provided:
 
-1. **Build and test (no publishing)** — push в `main`, pull request или ручной
-   запуск. Собирает и тестирует обе архитектуры. **Секреты не нужны.**
-2. **Daily Docker Hub publication** — ежедневно в **02:43 UTC / 08:43 Омск**
-   либо вручную. Снова собирает обе архитектуры с `--pull` и без кеша, проверяет,
-   затем публикует именно проверенные образы и собирает multiarch manifest.
+1. **Build and test (no publishing)** runs on pushes to `main`, pull requests,
+   and manual dispatch. It builds and tests both architectures. **No secrets
+   are needed.**
+2. **Daily Docker Hub publication** runs daily at **02:43 UTC / 08:43 Omsk** or
+   on manual dispatch. It rebuilds both architectures with fresh base images and
+   no cache, tests them, pushes the tested images, and creates the multi-platform
+   manifest.
 
-В Settings → Secrets and variables → Actions → Repository secrets добавить
-те же имена, что используются в
+Add the following repository secrets in Settings → Secrets and variables →
+Actions. These are the same names used by
 [JenkinsDocker](https://github.com/InsanusMokrassar/JenkinsDocker/blob/master/.github/workflows/docker-publish.yml):
 
-| Secret | Значение |
+| Secret | Value |
 | --- | --- |
-| `DOCKER_LOGIN` | Docker Hub login с правом записи в `insanusmokrassar/teamcity-agent` |
-| `DOCKER_PASSWORD` | Docker Hub access token с правом Read & Write |
+| `DOCKER_LOGIN` | Docker Hub login with write access to `insanusmokrassar/teamcity-agent` |
+| `DOCKER_PASSWORD` | Docker Hub access token with Read & Write permission |
 
-Имена совпадают с референсом, но repository secrets **не копируются GitHub
-автоматически между репозиториями**. До их добавления publication workflow
-корректно пропускает публикацию; проверки работают независимо. После добавления
-запустить publication workflow вручную или дождаться следующего расписания.
-Создать публичный Docker Hub repository `insanusmokrassar/teamcity-agent`, если
-аккаунт не создаёт его автоматически при первом push.
+GitHub does **not** automatically copy repository secrets between repositories.
+Until both secrets are configured, the publication workflow skips publication
+cleanly; the separate test workflow remains usable. After adding the secrets,
+run the publication workflow manually or wait for its next scheduled run.
+Create the public Docker Hub repository `insanusmokrassar/teamcity-agent` if
+the account does not create it automatically on the first push.
 
-Теги:
+Published tags:
 
-- `insanusmokrassar/teamcity-agent:YYYY-MM-DD` — multiarch, дата начала workflow в UTC;
-- `insanusmokrassar/teamcity-agent:latest` — последняя успешная multiarch-публикация;
-- `YYYY-MM-DD-amd64` и `YYYY-MM-DD-arm64` — соответствующие проверенные варианты.
+- `insanusmokrassar/teamcity-agent:YYYY-MM-DD`: multi-platform, using the UTC date
+  when the workflow starts.
+- `insanusmokrassar/teamcity-agent:latest`: the latest successful multi-platform build.
+- `YYYY-MM-DD-amd64` and `YYYY-MM-DD-arm64`: the corresponding tested platform images.
 
-Повторный запуск в тот же день обновляет теги этой даты. Общие теги обновляются
-только после успеха обеих архитектур; ошибка одной не продвигает `latest`.
-GitHub может задерживать cron и отключает scheduled workflow в неактивных
-публичных репозиториях после 60 дней; при этом его нужно включить снова.
+A rerun on the same day updates that day's tags. The shared date and `latest`
+tags are updated only after both platform tests succeed; a failed platform does
+not advance `latest`. GitHub may delay scheduled runs and disables scheduled
+workflows in inactive public repositories after 60 days; re-enable them if needed.
+
+## Repository language
+
+Use English for documentation, code comments, workflow names, commit messages,
+issues, and pull requests.
